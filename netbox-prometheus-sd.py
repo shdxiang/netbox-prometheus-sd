@@ -13,6 +13,9 @@ import pynetbox
 
 
 class Discovery(object):
+    # https://github.com/netbox-community/netbox/blob/9d3215e806043745a02d7d031c144665a681d7c2/netbox/dcim/choices.py
+    STATUS_ACTIVE = 1
+
     def __init__(self, args):
         super(Discovery, self).__init__()
         self.args = args
@@ -47,9 +50,10 @@ class Discovery(object):
 
         # Filter out devices without primary IP address as it is a requirement
         # to be polled by Prometheus
-        devices = self.netbox.dcim.devices.filter(has_primary_ip=True)
+        devices = self.netbox.dcim.devices.filter(
+            has_primary_ip=True, status=self.STATUS_ACTIVE)
         vm = self.netbox.virtualization.virtual_machines.filter(
-            has_primary_ip=True)
+            has_primary_ip=True, status=self.STATUS_ACTIVE)
         ips = self.netbox.ipam.ip_addresses.filter(
             **{'cf_%s' % self.args.custom_field: '{'})
 
@@ -135,7 +139,8 @@ class Discovery(object):
 
         targets = []
 
-        circuits = self.netbox.circuits.circuits.all()
+        circuits = self.netbox.circuits.circuits.filter(
+            status=self.STATUS_ACTIVE)
 
         for circuit in itertools.chain(circuits):
             if circuit.custom_fields.get(self.args.custom_field):

@@ -75,3 +75,10 @@ service discovery:
 ./netbox-prometheus-sd.py https://netbox.spiral.exchange <TOKEN> netbox.json -d device -f prom_node_labels && cat ./netbox.json
 ./netbox-prometheus-sd.py https://netbox.spiral.exchange <TOKEN> netbox.json -d circuit -f prom_blackbox_labels && cat ./netbox.json
 ```
+
+## Build
+
+```bash
+docker build --no-cache -t shdxiang/netbox-prometheus-sd .
+docker push shdxiang/netbox-prometheus-sd:latest
+```

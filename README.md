@@ -68,3 +68,10 @@ service discovery:
 1. Use `alpine`;
 
 2. Supports environment variable: `CUSTOM_FIELD`, `PORT`.
+
+## Test
+
+```bash
+./netbox-prometheus-sd.py https://netbox.spiral.exchange <TOKEN> netbox.json -d device -f prom_node_labels && cat ./netbox.json
+./netbox-prometheus-sd.py https://netbox.spiral.exchange <TOKEN> netbox.json -d circuit -f prom_blackbox_labels && cat ./netbox.json
+```

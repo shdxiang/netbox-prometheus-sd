@@ -13,8 +13,8 @@ import pynetbox
 
 
 class Discovery(object):
-    # https://github.com/netbox-community/netbox/blob/9d3215e806043745a02d7d031c144665a681d7c2/netbox/dcim/choices.py
-    STATUS_ACTIVE = 1
+    # https://github.com/netbox-community/netbox/blob/master/netbox/dcim/choices.py
+    STATUS_ACTIVE = 'active'
 
     def __init__(self, args):
         super(Discovery, self).__init__()

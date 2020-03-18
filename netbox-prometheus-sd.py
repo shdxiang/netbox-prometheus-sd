@@ -24,6 +24,8 @@ class Discovery(object):
         self.netbox = pynetbox.api(self.args.url, token=self.args.token)
         if self.args.discovery == 'device':
             targets = self.discover_device()
+        elif self.args.discovery == 'vm':
+            targets = self.discover_vm()
         elif self.args.discovery == 'circuit':
             targets = self.discover_circuit()
         else:
@@ -45,50 +47,53 @@ class Discovery(object):
         else:
             output.flush()
 
-    def discover_device(self):
+    def gen_targets(self, items):
         targets = []
 
-        # Filter out devices without primary IP address as it is a requirement
-        # to be polled by Prometheus
-        devices = self.netbox.dcim.devices.filter(
-            has_primary_ip=True, status=self.STATUS_ACTIVE)
-        vm = self.netbox.virtualization.virtual_machines.filter(
-            has_primary_ip=True, status=self.STATUS_ACTIVE)
-        ips = self.netbox.ipam.ip_addresses.filter(
-            **{'cf_%s' % self.args.custom_field: '{'})
-
-        for device in itertools.chain(devices, vm, ips):
-            if device.custom_fields.get(self.args.custom_field):
+        for item in items:
+            if item.custom_fields.get(self.args.custom_field):
                 labels = {'__port__': str(self.args.port)}
-                if getattr(device, 'name', None):
-                    labels['__meta_netbox_name'] = device.name
+                if getattr(item, 'name', None):
+                    labels['__meta_netbox_name'] = item.name
                 else:
-                    labels['__meta_netbox_name'] = repr(device)
+                    labels['__meta_netbox_name'] = repr(item)
 
-                if getattr(device, 'site', None):
-                    labels['__meta_netbox_pop'] = device.site.slug
+                if getattr(item, 'site', None):
+                    labels['__meta_netbox_pop'] = item.site.slug
 
                 try:
-                    device_targets = json.loads(
-                        device.custom_fields[self.args.custom_field])
+                    item_targets = json.loads(
+                        item.custom_fields[self.args.custom_field])
                 except ValueError as e:
                     logging.exception(e)
                     continue
 
-                if not isinstance(device_targets, list):
-                    device_targets = [device_targets]
+                if not isinstance(item_targets, list):
+                    item_targets = [item_targets]
 
-                for target in device_targets:
+                for target in item_targets:
                     target_labels = labels.copy()
                     target_labels.update(target)
-                    if hasattr(device, 'primary_ip'):
-                        address = device.primary_ip
+                    if hasattr(item, 'primary_ip'):
+                        address = item.primary_ip
                     else:
-                        address = device
+                        address = item
                     targets.append({'targets': ['%s:%s' % (str(netaddr.IPNetwork(
                         address.address).ip), target_labels['__port__'])], 'labels': target_labels})
 
         return targets
+
+    def discover_device(self):
+        devices = self.netbox.dcim.devices.filter(
+            has_primary_ip=True, status=self.STATUS_ACTIVE)
+
+        return self.gen_targets(devices)
+
+    def discover_vm(self):
+        vms = self.netbox.virtualization.virtual_machines.filter(
+            has_primary_ip=True, status=self.STATUS_ACTIVE)
+
+        return self.gen_targets(vms)
 
     def get_circuit_ip(self, circuit_id):
         try:
@@ -195,7 +200,7 @@ def main():
     parser.add_argument('output', help='Output file')
 
     parser.add_argument('-d', '--discovery', default='device',
-                        help='Discovery type, default: device', choices=['device', 'circuit'])
+                        help='Discovery type, default: device', choices=['device', 'vm', 'circuit'])
     args = parser.parse_args()
 
     discovery = Discovery(args)

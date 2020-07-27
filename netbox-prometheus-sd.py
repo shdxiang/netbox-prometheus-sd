@@ -51,35 +51,37 @@ class Discovery(object):
         targets = []
 
         for item in items:
-            if item.custom_fields.get(self.args.custom_field):
-                labels = {'__port__': str(self.args.port)}
-                if getattr(item, 'name', None):
-                    labels['__meta_netbox_name'] = item.name
+            if not item.custom_fields.get(self.args.custom_field):
+                continue
+
+            labels = {'__port__': str(self.args.port)}
+            if getattr(item, 'name', None):
+                labels['__meta_netbox_name'] = item.name
+            else:
+                labels['__meta_netbox_name'] = repr(item)
+
+            if getattr(item, 'site', None):
+                labels['__meta_netbox_pop'] = item.site.slug
+
+            try:
+                item_targets = json.loads(
+                    item.custom_fields[self.args.custom_field])
+            except ValueError as e:
+                logging.exception(e)
+                continue
+
+            if not isinstance(item_targets, list):
+                item_targets = [item_targets]
+
+            for target in item_targets:
+                target_labels = labels.copy()
+                target_labels.update(target)
+                if hasattr(item, 'primary_ip'):
+                    address = item.primary_ip
                 else:
-                    labels['__meta_netbox_name'] = repr(item)
-
-                if getattr(item, 'site', None):
-                    labels['__meta_netbox_pop'] = item.site.slug
-
-                try:
-                    item_targets = json.loads(
-                        item.custom_fields[self.args.custom_field])
-                except ValueError as e:
-                    logging.exception(e)
-                    continue
-
-                if not isinstance(item_targets, list):
-                    item_targets = [item_targets]
-
-                for target in item_targets:
-                    target_labels = labels.copy()
-                    target_labels.update(target)
-                    if hasattr(item, 'primary_ip'):
-                        address = item.primary_ip
-                    else:
-                        address = item
-                    targets.append({'targets': ['%s:%s' % (str(netaddr.IPNetwork(
-                        address.address).ip), target_labels['__port__'])], 'labels': target_labels})
+                    address = item
+                targets.append({'targets': ['%s:%s' % (str(netaddr.IPNetwork(
+                    address.address).ip), target_labels['__port__'])], 'labels': target_labels})
 
         return targets
 
@@ -95,30 +97,29 @@ class Discovery(object):
 
         return self.gen_targets(vms)
 
-    def get_circuit_ip(self, circuit_id):
+    def get_circuit_ip(self, circuit):
+        logging.debug(f'get_circuit_ip: {circuit}')
         try:
-            ta = self.netbox.circuits.circuit_terminations.filter(
-                circuit_id=circuit_id, term_side='A')[0]
-            logging.debug('terminal A: {}'.format(ta))
+            ta = self.netbox.circuits.circuit_terminations.get(
+                circuit.termination_a.id)
+            logging.debug(f'terminal A: {ta}')
 
-            tz = self.netbox.circuits.circuit_terminations.filter(
-                circuit_id=circuit_id, term_side='Z')[0]
-            logging.debug('terminal Z: {}'.format(tz))
+            tz = self.netbox.circuits.circuit_terminations.get(
+                circuit.termination_z.id)
+            logging.debug(f'terminal Z: {tz}')
         except RequestError as e:
             logging.exception(e)
             return None, None
 
         ipa = self.get_terminal_a_ip(ta)
-        logging.debug(
-            'circuit {}: IP of terminal A: {}'.format(circuit_id, ipa))
+        logging.debug(f'circuit {circuit}: IP of terminal A: {ipa}')
 
         ipz = self.get_terminal_z_ip(tz)
-        logging.debug(
-            'circuit {}: IP of terminal Z: {}'.format(circuit_id, ipz))
+        logging.debug(f'circuit {circuit}: IP of terminal Z: {ipz}')
 
         return ipa, ipz
 
-    # Here return `primary_ip`, not real `terminal_a_ip`, prometheus will get metrics forom this IP
+    # Here return `primary_ip`, not real `terminal_a_ip`, prometheus will get metrics from this IP
     def get_terminal_a_ip(self, ta):
         device = self.netbox.dcim.devices.get(ta.connected_endpoint.device.id)
         if hasattr(device, 'primary_ip'):
@@ -127,13 +128,13 @@ class Discovery(object):
             return None
 
     def get_terminal_z_ip(self, tz):
-        logging.debug('connected_endpoint device: {}'.format(
-            tz.connected_endpoint.device.name))
-        logging.debug('connected_endpoint interface: {}'.format(
-            tz.connected_endpoint.name))
+        cable = self.netbox.dcim.cables.get(tz.cable.id)
+        logging.debug(
+            f'cable of terminal-z {tz}: {cable}, cable id: {cable.id}')
+
         try:
             ip = self.netbox.ipam.ip_addresses.filter(
-                device_id=tz.connected_endpoint.device.id, interface=tz.connected_endpoint.name)
+                device_id=cable.termination_b.device.id, interface=cable.termination_b.name)
         except RequestError as e:
             logging.exception(e)
             return None
@@ -148,47 +149,48 @@ class Discovery(object):
             status=self.STATUS_ACTIVE)
 
         for circuit in itertools.chain(circuits):
-            if circuit.custom_fields.get(self.args.custom_field):
-                logging.debug('circuit: {}'.format(circuit.cid))
+            if not circuit.custom_fields.get(self.args.custom_field):
+                continue
 
-                ipa, ipz = self.get_circuit_ip(circuit.id)
-                if not ipa or not ipz:
-                    continue
+            logging.debug(f'circuit: {circuit}')
 
-                labels = {'__port__': str(self.args.port)}
+            ipa, ipz = self.get_circuit_ip(circuit)
+            if not ipa or not ipz:
+                continue
 
-                if getattr(circuit, 'cid', None):
-                    labels['__meta_netbox_name'] = circuit.cid
-                else:
-                    labels['__meta_netbox_name'] = repr(circuit)
+            labels = {'__port__': str(self.args.port)}
 
-                # labels['__meta_netbox_address'] = ipa
-                labels['__meta_netbox_target'] = ipz
+            if getattr(circuit, 'cid', None):
+                labels['__meta_netbox_name'] = circuit.cid
+            else:
+                labels['__meta_netbox_name'] = repr(circuit)
 
-                logging.debug(labels)
+            labels['__meta_netbox_target'] = ipz
 
-                try:
-                    device_targets = json.loads(
-                        circuit.custom_fields[self.args.custom_field])
-                except ValueError as e:
-                    logging.exception(e)
-                    continue
+            logging.debug(labels)
 
-                if not isinstance(device_targets, list):
-                    device_targets = [device_targets]
+            try:
+                device_targets = json.loads(
+                    circuit.custom_fields[self.args.custom_field])
+            except ValueError as e:
+                logging.exception(e)
+                continue
 
-                for target in device_targets:
-                    target_labels = labels.copy()
-                    target_labels.update(target)
-                    targets.append({'targets': ['%s:%s' % (
-                        ipa, target_labels['__port__'])], 'labels': target_labels})
+            if not isinstance(device_targets, list):
+                device_targets = [device_targets]
+
+            for target in device_targets:
+                target_labels = labels.copy()
+                target_labels.update(target)
+                targets.append({'targets': ['%s:%s' % (
+                    ipa, target_labels['__port__'])], 'labels': target_labels})
 
         return targets
 
 
 def main():
     format = "%(asctime)s %(filename)s [%(lineno)d][%(levelname)s] %(message)s"
-    logging.basicConfig(level=logging.INFO, format=format)
+    logging.basicConfig(level=logging.DEBUG, format=format)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=10000,

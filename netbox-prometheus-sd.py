@@ -121,7 +121,18 @@ class Discovery(object):
 
     # Here return `primary_ip`, not real `terminal_a_ip`, prometheus will get metrics from this IP
     def get_terminal_a_ip(self, ta):
-        device = self.netbox.dcim.devices.get(ta.connected_endpoint.device.id)
+        cable = self.netbox.dcim.cables.get(ta.cable.id)
+        logging.debug(
+            f'cable of terminal-a {ta}: {cable}, cable id: {cable.id}')
+
+        if hasattr(cable.termination_a.device, 'id'):
+            device = cable.termination_a.device
+        elif hasattr(cable.termination_b.device, 'id'):
+            device = cable.termination_b.device
+        else:
+            return None
+
+        device = self.netbox.dcim.devices.get(device.id)
         if hasattr(device, 'primary_ip'):
             return str(netaddr.IPNetwork(device.primary_ip.address).ip)
         else:
@@ -132,9 +143,18 @@ class Discovery(object):
         logging.debug(
             f'cable of terminal-z {tz}: {cable}, cable id: {cable.id}')
 
+        if hasattr(cable.termination_a.device, 'id'):
+            device = cable.termination_a.device
+            interface = cable.termination_a.name
+        elif hasattr(cable.termination_b.device, 'id'):
+            device = cable.termination_b.device
+            interface = cable.termination_b.name
+        else:
+            return None
+
         try:
             ip = self.netbox.ipam.ip_addresses.filter(
-                device_id=cable.termination_b.device.id, interface=cable.termination_b.name)
+                device_id=device.id, interface=interface)
         except RequestError as e:
             logging.exception(e)
             return None
@@ -190,7 +210,7 @@ class Discovery(object):
 
 def main():
     format = "%(asctime)s %(filename)s [%(lineno)d][%(levelname)s] %(message)s"
-    logging.basicConfig(level=logging.DEBUG, format=format)
+    logging.basicConfig(level=logging.INFO, format=format)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=10000,
